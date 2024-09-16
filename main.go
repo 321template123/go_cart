@@ -56,8 +56,12 @@ func main() {
 	}
 }
 
+// Так как у нас связка будет REACT - NGINX - GO
 func startServer() {
+	// Обрабатывать будем только несколько состояний
+	// Каждый пользователь может запросить список продуктов
 	http.HandleFunc("/api/product", product)
+
 	err := http.ListenAndServe(":8090", nil)
 	if err != nil {
 		fmt.Println("Ошибка! Сервер не удалось запустить")
@@ -101,12 +105,8 @@ func product(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// Функция возвращает ответ в виде JSON
-func requestJson(w http.ResponseWriter, data string) {
-	w.Header().Set("Content-Type", "application/json")
-	w.Write([]byte(data))
-}
-
+// Вот он запрос продуктов
+// Чтобы особо не возится со всякими БД, я просто с FakeApi буду брать данные и их же кэшировать.
 func getProduct(query_page string) string {
 	// URL для GET-запроса
 	url := "https://fakerapi.it/api/v2/books?_quantity=10"
@@ -124,23 +124,34 @@ func getProduct(query_page string) string {
 		log.Fatalf("Ошибка при чтении ответа: %v", err)
 	}
 
+	// Прежде чем закинуть в Redis, пингую, просто на всякий случай
+	// Можно закинуть в отдельную функцию, хотя в целом срать, так как Set точно такую же ошибку вернёт.
+	// В теории эту фигню, конечно лучше вынести, чтобы сама функция не занималась добавлением в Redis.
+	// Таким образом у неё охват шире становится, ну или хотябы добавить правило формирование ключа (или работать с ним как с параметром функции).
 	_, err = redisConnect.Ping(redisCtx).Result()
 	if err == nil {
-		_, err = redisConnect.Set(redisCtx, PRODUCT_PAGE_PREFIX+query_page, string(body), 0).Result()
-		fmt.Println("Записываем в " + PRODUCT_PAGE_PREFIX + query_page + "полученные данные")
+		redisConnect.Set(redisCtx, PRODUCT_PAGE_PREFIX+query_page, string(body), 0)
 	}
 	// Выводим ответ на экран
 	return string(body)
 }
 
 func getProductFromRedis(query_page string) string {
+	// Опять бесполезный Ping
 	_, err := redisConnect.Ping(redisCtx).Result()
 	if err != nil {
 		return getProduct(query_page)
 	}
+	// Если продукция у нас нашлась, то просто вернём её, в противном случае выполняем getProduct
 	val, err := redisConnect.Get(redisCtx, fmt.Sprintf(PRODUCT_PAGE_PREFIX+query_page)).Result()
 	if err != nil {
 		return getProduct(query_page)
 	}
 	return val
+}
+
+// Функция возвращает ответ в виде JSON
+func requestJson(w http.ResponseWriter, data string) {
+	w.Header().Set("Content-Type", "application/json")
+	w.Write([]byte(data))
 }
